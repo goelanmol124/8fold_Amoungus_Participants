@@ -298,6 +298,11 @@ function getPlayerColor(pid) {
   return playerColorMap[pid] || '#888';
 }
 
+function getPlayerNameColor(pid) {
+  const role = (gameData && gameData.all_roles) ? gameData.all_roles[pid] : null;
+  return role === 'impostor' ? '#ff3e3e' : getPlayerColor(pid);
+}
+
 // ===== GAME DATA =====
 function loadGame(data) {
   gameData = data;
@@ -340,8 +345,8 @@ function showStartSplash() {
   for (const pid of impostors) {
     const card = document.createElement('div');
     card.className = 'splash-impostor-card';
-    card.style.borderColor = getPlayerColor(pid);
-    card.style.color = getPlayerColor(pid);
+    card.style.borderColor = '#ff3e3e';
+    card.style.color = '#ff3e3e';
     card.textContent = getPlayerDisplayName(pid);
     splashImpostors.appendChild(card);
   }
@@ -375,7 +380,7 @@ function buildRoster() {
     item.id = `roster-${pid}`;
     item.innerHTML = `
       <span class="roster-color-dot" style="background:${getPlayerColor(pid)}"></span>
-      <span class="roster-name">${escapeHtml(getPlayerDisplayName(pid))}</span>
+      <span class="roster-name" style="color:${getPlayerNameColor(pid)}">${escapeHtml(getPlayerDisplayName(pid))}</span>
       <span class="roster-location"></span>
     `;
     rosterPlayers.appendChild(item);
@@ -778,11 +783,11 @@ function updateRoundInfo(log) {
     const statusClass = isSuccess ? 'success' : 'fail';
     const statusText = isSuccess ? 'SUCCESS' : `FAILED \u2014 ${res.reason || 'unknown'}`;
     const isKill = act.action === 'kill';
-    const color = getPlayerColor(pid);
+    const nameColor = getPlayerNameColor(pid);
 
     html += `
       <div class="action-entry ${statusClass}${isKill ? ' kill-action' : ''}">
-        <div class="action-player" style="color:${color}">${escapeHtml(getPlayerDisplayName(pid))}</div>
+        <div class="action-player" style="color:${nameColor}">${escapeHtml(getPlayerDisplayName(pid))}</div>
         <div class="action-detail">${act.action}${act.target ? ' \u2192 ' + escapeHtml(getPlayerDisplayName(act.target) || act.target) : ''}</div>
         <div class="action-result ${statusClass}">${statusText}</div>
       </div>
@@ -812,10 +817,11 @@ function updateChatTranscript(roundNum) {
 
     const transcript = m.transcript || [];
     for (const msg of transcript) {
-      const color = getPlayerColor(msg.speaker);
+      const nameColor = getPlayerNameColor(msg.speaker);
+      const dotColor = getPlayerColor(msg.speaker);
       html += `
-        <div class="chat-msg" style="border-left-color:${color}">
-          <div class="chat-speaker" style="color:${color}">
+        <div class="chat-msg" style="border-left-color:${dotColor}">
+          <div class="chat-speaker" style="color:${nameColor}">
             ${escapeHtml(getPlayerDisplayName(msg.speaker))}
             <span class="chat-rotation">R${msg.rotation}</span>
           </div>
@@ -844,8 +850,24 @@ function updateChatTranscript(roundNum) {
 }
 
 // ===== MEETING OVERLAY (Auto-flowing) =====
+let meetingTimers = []; // track ALL pending timers for clean teardown
+
+function clearMeetingTimers() {
+  for (const t of meetingTimers) clearTimeout(t);
+  meetingTimers = [];
+}
+
+function addMeetingTimer(fn, delay) {
+  const id = setTimeout(fn, delay);
+  meetingTimers.push(id);
+  return id;
+}
+
 function showMeeting(meeting) {
+  // Clean up any previous meeting state
+  clearMeetingTimers();
   meetingOverlay.classList.remove('hidden');
+  meetingVoteSection.classList.add('hidden');
 
   // Lower BGM volume during meeting
   if (sounds.bgm) sounds.bgm.volume = 0.05;
@@ -862,15 +884,16 @@ function showMeeting(meeting) {
     ${meeting.body_found ? `<br>Body: <strong>${escapeHtml(getPlayerDisplayName(meeting.body_found))}</strong> in <strong>${meeting.body_location}</strong>` : ''}
   `;
 
-  // Build all messages hidden
+  // Build all messages hidden initially
   const transcript = meeting.transcript || [];
   let tHtml = '';
   for (let i = 0; i < transcript.length; i++) {
     const msg = transcript[i];
-    const color = getPlayerColor(msg.speaker);
+    const nameColor = getPlayerNameColor(msg.speaker);
+    const dotColor = getPlayerColor(msg.speaker);
     tHtml += `
-      <div class="meeting-msg" data-msg-idx="${i}" style="border-left-color:${color}">
-        <div class="msg-speaker" style="color:${color}">
+      <div class="meeting-msg" data-msg-idx="${i}" style="border-left-color:${dotColor}">
+        <div class="msg-speaker" style="color:${nameColor}">
           ${escapeHtml(getPlayerDisplayName(msg.speaker))}
           <span class="msg-rotation">R${msg.rotation}</span>
         </div>
@@ -879,34 +902,39 @@ function showMeeting(meeting) {
     `;
   }
   meetingTranscript.innerHTML = tHtml;
-  meetingVoteSection.classList.add('hidden');
+  meetingTranscript.scrollTop = 0;
 
-  // Auto-reveal messages one by one
-  let msgIdx = 0;
-  const msgDelay = Math.max(400, 1200 / Math.max(1, playSpeed));
+  // Calculate per-message delay for good pacing
+  // Target: entire discussion takes ~12-20 seconds regardless of message count
+  // At 1x speed, aim for ~15s total discussion time
+  const totalTargetMs = 15000 / Math.max(0.5, playSpeed);
+  const perMsgDelay = Math.max(200, Math.min(1500, totalTargetMs / Math.max(1, transcript.length)));
 
-  function revealNext() {
-    if (msgIdx < transcript.length) {
-      const msgEl = meetingTranscript.querySelector(`[data-msg-idx="${msgIdx}"]`);
+  // Schedule each message reveal at staggered times
+  const startDelay = 800; // initial pause after header appears
+
+  for (let i = 0; i < transcript.length; i++) {
+    const revealTime = startDelay + (i * perMsgDelay);
+    addMeetingTimer(() => {
+      const msgEl = meetingTranscript.querySelector(`[data-msg-idx="${i}"]`);
       if (msgEl) {
         msgEl.classList.add('visible');
-        // Auto-scroll
-        meetingTranscript.scrollTop = meetingTranscript.scrollHeight;
+        // Scroll just enough to bring this message into view at the bottom
+        msgEl.scrollIntoView({ behavior: 'smooth', block: 'end' });
       }
-      msgIdx++;
-      meetingAnimTimer = setTimeout(revealNext, msgDelay);
-    } else {
-      // All messages shown, show vote result after a pause
-      meetingAnimTimer = setTimeout(() => showVoteResult(meeting), 1500);
-    }
+    }, revealTime);
   }
 
-  // Start revealing after a brief pause
-  meetingAnimTimer = setTimeout(revealNext, 1000);
+  // After all messages revealed, show vote result
+  const allMsgsTime = startDelay + (transcript.length * perMsgDelay) + 1200;
+  addMeetingTimer(() => showVoteResult(meeting), allMsgsTime);
 }
 
 function showVoteResult(meeting) {
   meetingVoteSection.classList.remove('hidden');
+
+  // Scroll vote section into view
+  meetingVoteSection.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
 
   let rText = 'NO EJECTION \u2014 SKIPPED';
   if (meeting.voted_out) {
@@ -928,20 +956,20 @@ function showVoteResult(meeting) {
   meetingVoteTally.innerHTML = tallyHtml;
 
   // After showing vote, either show ejection or dismiss
-  meetingAnimTimer = setTimeout(() => {
+  const holdTime = 2500 / Math.max(0.5, playSpeed);
+  addMeetingTimer(() => {
     hideMeeting();
     if (meeting.voted_out) {
       showEjection(meeting);
     } else {
       resumeAfterMeeting();
     }
-  }, 3000);
+  }, holdTime);
 }
 
 function hideMeeting() {
   meetingOverlay.classList.add('hidden');
-  clearTimeout(meetingAnimTimer);
-  meetingAnimTimer = null;
+  clearMeetingTimers();
   // Restore BGM volume
   if (sounds.bgm) sounds.bgm.volume = 0.15;
 }
@@ -1072,8 +1100,8 @@ function showEndScreen() {
 
   for (const [pid, role] of sorted) {
     const cardClass = role === 'impostor' ? 'impostor-card' : 'crewmate-card';
-    rolesHtml += `<div class="end-role-card ${cardClass}" style="border-color:${getPlayerColor(pid)}">
-      <span style="color:${getPlayerColor(pid)}">${escapeHtml(getPlayerDisplayName(pid))}</span>
+    rolesHtml += `<div class="end-role-card ${cardClass}" style="border-color:${getPlayerNameColor(pid)}">
+      <span style="color:${getPlayerNameColor(pid)}">${escapeHtml(getPlayerDisplayName(pid))}</span>
       <span style="opacity:0.6;margin-left:6px">${role}</span>
     </div>`;
   }
@@ -1208,10 +1236,16 @@ function bindEvents() {
   // Keyboard shortcuts
   document.addEventListener('keydown', (e) => {
     if (e.key === 'Escape') {
+      const wasMeetingOpen = !meetingOverlay.classList.contains('hidden');
+      const wasEjectOpen = !ejectOverlay.classList.contains('hidden');
       hideMeeting();
       endScreen.classList.add('hidden');
       ejectOverlay.classList.add('hidden');
       startSplash.classList.add('hidden');
+      // Resume playback if we dismissed a meeting/ejection mid-flow
+      if ((wasMeetingOpen || wasEjectOpen) && isPlaying) {
+        resumeAfterMeeting();
+      }
       return;
     }
 

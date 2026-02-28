@@ -873,8 +873,7 @@ body {
   flex: 1;
   overflow-y: auto;
   padding: 16px 24px;
-  min-height: 200px;
-  max-height: 50vh;
+  min-height: 150px;
 }
 .meeting-transcript::-webkit-scrollbar { width: 5px; }
 .meeting-transcript::-webkit-scrollbar-track { background: var(--bg-panel); }
