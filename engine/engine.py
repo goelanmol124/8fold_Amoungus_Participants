@@ -245,7 +245,10 @@ class ObservationGenerator:
         alive = [p.id for p in self.state.players.values() if p.alive]
         dead = [p.id for p in self.state.players.values() if not p.alive and not p.ejected]
         ejected = [p.id for p in self.state.players.values() if p.ejected]
-        
+
+        from .config import MAP_ADJACENCY
+        adjacent_rooms = MAP_ADJACENCY.get(player.location, [])
+
         your_tasks = []
         for t in self.state.tasks.get(player_id, []):
             your_tasks.append({
@@ -258,15 +261,25 @@ class ObservationGenerator:
                 "id_to_use": t.task_id
             })
 
+        prev_result = None
+        if player_id in self.state.action_results:
+            pr = self.state.action_results[player_id]
+            prev_result = {"action": pr.action, "success": pr.success, "reason": pr.reason}
+
         return {
             "phase": "task",
+            "is_ghost": True,
             "identity": {
                 "your_id": player.id,
                 "your_role": player.role.value,
                 "your_location": player.location
             },
             "players": {"alive": alive, "dead": dead, "ejected": ejected},
+            "room_observations": {
+                "adjacent_rooms": adjacent_rooms
+            },
             "tasks": {"your_tasks": your_tasks, "global_task_progress": self._global_task_progress()},
+            "previous_action_result": prev_result,
             "game_metadata": {
                 "round_number": self.state.round_number,
                 "max_total_rounds": self.state.config.max_total_rounds
@@ -513,6 +526,28 @@ class ActionResolver:
                 if other != caller:
                     self.state.action_results[other].success = False
                     self.state.action_results[other].reason = "Meeting was triggered by another player this round."
+            # Log the round before returning so meeting rounds appear in game_log
+            self.state.game_log.append({
+                "round": self.state.round_number,
+                "actions": actions,
+                "results": {pid: {"success": r.success, "reason": r.reason} for pid, r in self.state.action_results.items()},
+                "meeting_triggered": {
+                    "trigger": meeting_trigger,
+                    "called_by": caller,
+                    "body_found": body_found["player_id"] if body_found else None,
+                    "body_location": body_found["location"] if body_found else None
+                },
+                "state": {
+                    "player_locations": {pid: p.location for pid, p in self.state.players.items()},
+                    "alive_players": [pid for pid, p in self.state.players.items() if p.alive],
+                    "bodies": copy.deepcopy(self.state.bodies),
+                    "sabotage": {
+                        "type": self.state.sabotage.type.value,
+                        "countdown": self.state.sabotage.countdown,
+                        "fix_progress": self.state.sabotage.fix_progress
+                    } if self.state.sabotage else None
+                }
+            })
             return # STOP RESOLUTION
 
         # Step 8: RESOLVE SABOTAGE TRIGGERS
@@ -675,7 +710,9 @@ class ActionResolver:
             if p.role != Role.IMPOSTOR: return ActionResult(act, False, "Only impostors can sabotage")
             if self.state.sabotage is not None: return ActionResult(act, False, "Sabotage already active")
             if self.state.sabotage_cooldown > 0: return ActionResult(act, False, "Sabotage cooldown active")
-            if action.get("target") not in SABOTAGE_DEFINITIONS: return ActionResult(act, False, "Invalid sabotage")
+            sab_target = str(action.get("target", "")).lower()
+            if sab_target not in SABOTAGE_DEFINITIONS: return ActionResult(act, False, "Invalid sabotage")
+            action["target"] = sab_target
             return ActionResult(act, True)
             
         if act == "fix_sabotage":

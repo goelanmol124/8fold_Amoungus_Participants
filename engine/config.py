@@ -4,7 +4,7 @@ from dataclasses import dataclass
 class GameConfig:
     num_players: int = 7
     num_impostors: int = 2
-    max_total_rounds: int = 60
+    max_total_rounds: int = 90
     kill_cooldown: int = 6
     discussion_rotations: int = 3
     message_char_limit: int = 500
