@@ -47,6 +47,19 @@ MAP_ADJACENCY: dict[str, list[str]] = {
 
 ALL_ROOMS: list[str] = list(MAP_ADJACENCY.keys())
 
+VENT_CONNECTIONS: dict[str, list[str]] = {
+    "Reactor":      ["Upper Engine", "Lower Engine"],
+    "Upper Engine": ["Reactor", "Lower Engine"],
+    "Lower Engine": ["Reactor", "Upper Engine"],
+    "MedBay":       ["Electrical", "Security"],
+    "Electrical":   ["MedBay", "Security"],
+    "Security":     ["MedBay", "Electrical"],
+    "Navigation":   ["Shields"],
+    "Shields":      ["Navigation"],
+    "Admin":        ["Cafeteria"],
+    "Cafeteria":    ["Admin"],
+}
+
 TASK_POOL: list[dict] = [
     {"name": "Fix Wiring",         "location": "Electrical",     "required": 3, "visual": False},
     {"name": "Divert Power",       "location": "Electrical",     "required": 2, "visual": False},
@@ -80,5 +93,5 @@ SABOTAGE_DEFINITIONS: dict[str, dict] = {
 
 VALID_ACTIONS: list[str] = [
     "move", "do_task", "fake_task", "kill", "report",
-    "call_emergency", "sabotage", "fix_sabotage", "use_admin", "wait"
+    "call_emergency", "sabotage", "fix_sabotage", "use_admin", "vent", "wait"
 ]

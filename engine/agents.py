@@ -6,7 +6,7 @@ import requests
 import logging
 from collections import deque
 from .engine import BaseAgent, Role
-from .config import MAP_ADJACENCY
+from .config import MAP_ADJACENCY, VENT_CONNECTIONS
 
 
 # --- LLM Utilities ---
@@ -79,6 +79,9 @@ def format_observation_as_text(obs: dict) -> str:
         if "impostor_info" in obs and obs["impostor_info"]:
             ii = obs["impostor_info"]
             parts.append(f"Your teammate: {', '.join(ii.get('teammates', []))}. Kill cooldown: {ii.get('kill_cooldown', 0)}.")
+            vent_conns = ii.get("vent_connections", [])
+            if vent_conns:
+                parts.append(f"VENT AVAILABLE: You can vent to {', '.join(vent_conns)}.")
             
         avail = obs.get("available_actions", {})
         actions = [k for k, v in avail.items() if v]
@@ -287,6 +290,14 @@ class RuleBasedBot(BaseAgent):
         if self.role == "impostor" and avail.get("can_kill"):
             players = obs.get("room_observations", {}).get("players_present", [])
             if players: return {"action": "kill", "target": players[0]["id"]}
+
+        # Impostor: vent away if just killed someone (cooldown was just set)
+        if self.role == "impostor" and avail.get("can_vent"):
+            ii = obs.get("impostor_info", {})
+            if ii.get("kill_cooldown", 0) > 0:
+                vent_targets = ii.get("vent_connections", [])
+                if vent_targets:
+                    return {"action": "vent", "target": random.choice(vent_targets)}
 
         # Crewmate: do tasks
         if self.role == "crewmate":

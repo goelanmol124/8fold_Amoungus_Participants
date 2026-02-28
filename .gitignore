@@ -25,3 +25,6 @@ env/
 *.log
 
 *.json
+
+# Evaluation
+evaluation_suite/

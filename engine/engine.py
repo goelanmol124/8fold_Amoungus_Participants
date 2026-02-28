@@ -174,9 +174,11 @@ class ObservationGenerator:
         # Impostor info
         impostor_info = None
         if player.role == Role.IMPOSTOR:
+            from .config import VENT_CONNECTIONS
             impostor_info = {
                 "teammates": [p.id for p in self.state.players.values() if p.role == Role.IMPOSTOR and p.id != player_id],
-                "kill_cooldown": player.kill_cooldown
+                "kill_cooldown": player.kill_cooldown,
+                "vent_connections": VENT_CONNECTIONS.get(player.location, [])
             }
 
         # Admin table
@@ -190,6 +192,8 @@ class ObservationGenerator:
         can_kill = player.role == Role.IMPOSTOR and player.kill_cooldown == 0
         can_sabotage = player.role == Role.IMPOSTOR and self.state.sabotage is None and self.state.sabotage_cooldown == 0
         can_fix = self.state.sabotage is not None and player.location in self.state.sabotage.fix_required
+        from .config import VENT_CONNECTIONS
+        can_vent = player.role == Role.IMPOSTOR and player.location in VENT_CONNECTIONS
 
         # Previous action
         prev_result = None
@@ -230,7 +234,8 @@ class ObservationGenerator:
                 "can_emergency": can_emergency,
                 "can_kill": can_kill,
                 "can_sabotage": can_sabotage,
-                "can_fix": can_fix
+                "can_fix": can_fix,
+                "can_vent": can_vent
             },
             "previous_action_result": prev_result,
             "memory_summary": memory_summary,
@@ -324,7 +329,7 @@ class ObservationGenerator:
         if player.role == Role.IMPOSTOR:
             impostor_teammates = [p.id for p in self.state.players.values() if p.role == Role.IMPOSTOR and p.id != player_id]
         
-        from .config import MAP_ADJACENCY, ALL_ROOMS
+        from .config import MAP_ADJACENCY, ALL_ROOMS, VENT_CONNECTIONS
         return {
             "game_id": "game",
             "your_id": player_id,
@@ -332,7 +337,8 @@ class ObservationGenerator:
             "impostor_teammates": impostor_teammates,
             "map": {
                 "rooms": ALL_ROOMS,
-                "adjacency": MAP_ADJACENCY
+                "adjacency": MAP_ADJACENCY,
+                "vent_network": VENT_CONNECTIONS
             },
             "players": list(self.state.players.keys()),
             "tasks": [
@@ -450,6 +456,25 @@ class ActionResolver:
             hist.append({"round": self.state.round_number, "location": tgt1})
             if len(hist) > self.state.config.memory_movement_cap:
                 self.state.movement_history[pid1] = hist[-self.state.config.memory_movement_cap:]
+
+        # Step 4b: RESOLVE VENTS (silent impostor teleport)
+        for pid, action in validated_actions.items():
+            if action.get("action") == "vent":
+                target = action.get("target")
+                origin = self.state.players[pid].location
+                self.state.players[pid].location = target
+                self.state.players[pid].last_action = "venting"
+
+                # Track in movement history (impostor's own memory)
+                hist = self.state.movement_history.setdefault(pid, [])
+                hist.append({"round": self.state.round_number, "location": target})
+                if len(hist) > self.state.config.memory_movement_cap:
+                    self.state.movement_history[pid] = hist[-self.state.config.memory_movement_cap:]
+
+                # Fellow impostors in the destination room see arrival
+                for other_p in self.state.players.values():
+                    if other_p.id != pid and other_p.alive and other_p.role == Role.IMPOSTOR and other_p.location == target:
+                        self.state.events[other_p.id].append(f"{pid} vented in from {origin}")
 
         # Step 5: RESOLVE KILLS
         kill_actions = sorted([pid for pid, act in validated_actions.items() if act.get("action") == "kill"])
@@ -725,7 +750,14 @@ class ActionResolver:
         if act == "use_admin":
             if p.location != "Admin": return ActionResult(act, False, "Must be in Admin")
             return ActionResult(act, True)
-            
+
+        if act == "vent":
+            if p.role != Role.IMPOSTOR: return ActionResult(act, False, "Only impostors can vent")
+            from .config import VENT_CONNECTIONS
+            if p.location not in VENT_CONNECTIONS: return ActionResult(act, False, "No vent in this room")
+            if action.get("target") not in VENT_CONNECTIONS[p.location]: return ActionResult(act, False, "Invalid vent destination")
+            return ActionResult(act, True)
+
         return ActionResult(act, False, "Unknown action")
 
     def _check_win_condition(self) -> bool:
