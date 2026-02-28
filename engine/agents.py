@@ -88,7 +88,7 @@ def format_observation_as_text(obs: dict) -> str:
         return "\n".join(parts)
     except Exception as e:
         logging.error(f"Error formatting observation: {e}")
-        return "Error reading observation. Check your logs."
+        return f"Error formatting observation: {e}\nRaw observation: {json.dumps(obs, default=str)}"
     
 def bfs_shortest_path(start: str, end: str, adjacency: dict) -> list[str]:
     """
@@ -219,8 +219,15 @@ RESPONSE FORMAT:
         chat_hist = "\n".join([f"{m['speaker']}: {m['message']}" for m in obs.get("chat_history", [])])
         user_msg = f"CHAT HISTORY:\n{chat_hist}\n\nWho do you vote for? Respond with Player ID or 'skip'."
         resp = self.llm.call(prompt, user_msg)
-        # Clean up response to just the ID
-        return resp.strip().split()[-1].replace('"', '').replace("'", "")
+        # Search for valid player IDs in response
+        alive = obs.get("players", {}).get("alive", [])
+        resp_clean = resp.strip().lower()
+        if "skip" in resp_clean:
+            return "skip"
+        for pid in alive:
+            if pid.lower() in resp_clean:
+                return pid
+        return "skip"
 
     def on_game_end(self, result): pass
 
@@ -254,12 +261,48 @@ class RuleBasedBot(BaseAgent):
         self.id = config["your_id"]
         self.role = config["your_role"]
     def on_task_phase(self, obs):
+        is_ghost = obs.get("is_ghost", False)
+        adj = obs.get("room_observations", {}).get("adjacent_rooms", [])
+        loc = obs.get("identity", {}).get("your_location", "")
+
+        # Ghost logic: focus on completing tasks
+        if is_ghost:
+            tasks = obs.get("tasks", {})
+            if isinstance(tasks.get("your_tasks"), list):
+                # Do a task at current location if available
+                for t in tasks["your_tasks"]:
+                    if t["location"] == loc and t["progress"] < t["required"]:
+                        return {"action": "do_task", "target": t["id_to_use"]}
+                # Move toward an incomplete task
+                for t in tasks["your_tasks"]:
+                    if t["progress"] < t["required"]:
+                        path = bfs_shortest_path(loc, t["location"], MAP_ADJACENCY)
+                        if len(path) > 1:
+                            return {"action": "move", "target": path[1]}
+            return {"action": "move", "target": random.choice(adj)} if adj else {"action": "wait"}
+
+        # Living player logic
         avail = obs.get("available_actions", {})
         if avail.get("can_report"): return {"action": "report"}
         if self.role == "impostor" and avail.get("can_kill"):
             players = obs.get("room_observations", {}).get("players_present", [])
             if players: return {"action": "kill", "target": players[0]["id"]}
-        adj = obs.get("room_observations", {}).get("adjacent_rooms", [])
+
+        # Crewmate: do tasks
+        if self.role == "crewmate":
+            tasks = obs.get("tasks", {})
+            if isinstance(tasks.get("your_tasks"), list):
+                # Do a task at current location if available
+                for t in tasks["your_tasks"]:
+                    if t["location"] == loc and t["progress"] < t["required"]:
+                        return {"action": "do_task", "target": t["id_to_use"]}
+                # Move toward an incomplete task
+                for t in tasks["your_tasks"]:
+                    if t["progress"] < t["required"]:
+                        path = bfs_shortest_path(loc, t["location"], MAP_ADJACENCY)
+                        if len(path) > 1:
+                            return {"action": "move", "target": path[1]}
+
         return {"action": "move", "target": random.choice(adj)} if adj else {"action": "wait"}
     def on_discussion(self, obs): return "I was doing tasks."
     def on_vote(self, obs): return "skip"

@@ -696,6 +696,8 @@ class ActionResolver:
             return ActionResult(act, True)
             
         if act == "report":
+            if self.state.sabotage and self.state.sabotage.type == SabotageType.LIGHTS and p.role == Role.CREWMATE:
+                return ActionResult(act, False, "Cannot see bodies during lights sabotage")
             if any(b["location"] == p.location for b in self.state.bodies):
                 return ActionResult(act, True)
             return ActionResult(act, False, "No body to report")
