@@ -303,6 +303,11 @@ function getPlayerNameColor(pid) {
   return role === 'impostor' ? '#ff3e3e' : getPlayerColor(pid);
 }
 
+function getMapLabelColor(pid) {
+  const role = (gameData && gameData.all_roles) ? gameData.all_roles[pid] : null;
+  return role === 'impostor' ? '#ff3e3e' : '#ffffff';
+}
+
 // ===== GAME DATA =====
 function loadGame(data) {
   gameData = data;
@@ -722,12 +727,12 @@ function updatePlayers(state) {
       const body = group.querySelector('.player-body');
       if (body && isAlive) body.setAttribute('fill', color);
 
-      // Update label to team name
+      // Update label to team name with impostor color
       const label = group.querySelector('.player-label');
       if (label) {
         const displayName = getPlayerDisplayName(pid);
-        // Truncate long names
         label.textContent = displayName.length > 10 ? displayName.substring(0, 9) + '..' : displayName;
+        label.setAttribute('fill', getMapLabelColor(pid));
       }
     }
   }
@@ -762,6 +767,7 @@ function createPlayerToken(pid, color) {
   const label = createSvgEl('text', {
     x: 0, y: 20,
     class: 'player-label',
+    fill: getMapLabelColor(pid),
   });
   const displayName = getPlayerDisplayName(pid);
   label.textContent = displayName.length > 10 ? displayName.substring(0, 9) + '..' : displayName;
@@ -905,13 +911,12 @@ function showMeeting(meeting) {
   meetingTranscript.scrollTop = 0;
 
   // Calculate per-message delay for good pacing
-  // Target: entire discussion takes ~12-20 seconds regardless of message count
-  // At 1x speed, aim for ~15s total discussion time
-  const totalTargetMs = 15000 / Math.max(0.5, playSpeed);
-  const perMsgDelay = Math.max(200, Math.min(1500, totalTargetMs / Math.max(1, transcript.length)));
+  // At 1x speed, aim for ~30s total discussion time so audience can read
+  const totalTargetMs = 30000 / Math.max(0.5, playSpeed);
+  const perMsgDelay = Math.max(500, Math.min(2500, totalTargetMs / Math.max(1, transcript.length)));
 
   // Schedule each message reveal at staggered times
-  const startDelay = 800; // initial pause after header appears
+  const startDelay = 1200; // initial pause after header appears
 
   for (let i = 0; i < transcript.length; i++) {
     const revealTime = startDelay + (i * perMsgDelay);
@@ -981,7 +986,7 @@ function showEjection(meeting) {
 
   const pid = meeting.voted_out;
   const name = getPlayerDisplayName(pid);
-  const color = getPlayerColor(pid);
+  const color = getPlayerNameColor(pid);
   const roleRevealed = meeting.role_revealed;
 
   let text = `${name} was ejected.`;
